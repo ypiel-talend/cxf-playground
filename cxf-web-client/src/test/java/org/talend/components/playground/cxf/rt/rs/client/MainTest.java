@@ -2,10 +2,12 @@ package org.talend.components.playground.cxf.rt.rs.client;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import javax.ws.rs.core.Response;
@@ -14,9 +16,12 @@ import org.apache.cxf.configuration.jsse.TLSClientParameters;
 import org.apache.cxf.configuration.security.AuthorizationPolicy;
 import org.apache.cxf.jaxrs.client.WebClient;
 import org.apache.cxf.transport.http.HTTPConduit;
+import org.apache.cxf.transports.http.configuration.HTTPClientPolicy;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class MainTest {
 
@@ -28,6 +33,11 @@ class MainTest {
 
         // The base URL
         WebClient client = WebClient.create("https://httpbin.org");
+
+        // Timeout configuration
+        final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
+        conduit.getClient().setConnectionTimeout(1000 * 2);
+        conduit.getClient().setReceiveTimeout(1000 * 2);
 
         // Can add simple query parameter
         client.query("name", "Peter");
@@ -42,7 +52,7 @@ class MainTest {
         client.header("multiValuedHeader", "one", "two", "three");
 
 
-        final Response resp = client.path("post")  // 2nd part of the query
+        final Response resp = client.path("{verb}", "post")  // 2nd part of the query with substitution
                 .accept("application/json")        // Set acceptance type
                 .invoke("POST"          // Set the HTTP verb
                         , "Body content");   // Body content as String
@@ -99,7 +109,7 @@ class MainTest {
      */
     @Test
     public void disabledCertificateAndDigestAuthent() {
-        WebClient client = WebClient.create("https://restimprove:45300/", "peter", "aze123#", null);
+        WebClient client = WebClient.create("https://restimprove:45300/");
 
         // Get the conduit
         final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
@@ -130,6 +140,145 @@ class MainTest {
         final String strResponse = resp.readEntity(String.class);
         Assertions.assertEquals(200, status);
     }
+
+    /**
+     * NTLM authent.
+     */
+    @Test
+    public void certificateCheckingAndNTLMAuthent() {
+        WebClient client = WebClient.create("https://mytestclient.demo1.freeipa.org");
+
+        // Get the conduit
+        final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
+
+        boolean acceptAllCertificates = true;
+        if(acceptAllCertificates){
+            // Disable certificate verification
+            TLSClientParameters params = conduit.getTlsClientParameters();
+            if (params == null) {
+                params = new TLSClientParameters();
+                conduit.setTlsClientParameters(params);
+            }
+            params.setTrustManagers(new TrustManager[] { new BlindTrustManager() });
+            params.setDisableCNCheck(true);
+        }
+
+        // Disgest authent support
+        AuthorizationPolicy authPolicy = new AuthorizationPolicy();
+        authPolicy.setAuthorizationType("NTLM");
+        authPolicy.setUserName("admin");
+        authPolicy.setPassword("Secret123");
+        conduit.setAuthorization(authPolicy);
+
+
+        final Response resp = client.accept("application/json").invoke("POST", "{\"method\":\"stageuser_find\",\"params\":[[\"\"],{\"pkey_only\":true,\"sizelimit\":0,\"version\":\"2.240\"}]}");
+        final int status = resp.getStatus();
+        final String strResponse = resp.readEntity(String.class);
+        Assertions.assertEquals(200, status);
+    }
+
+    /**
+     * Manage redirection:
+     *  - auto-redirect
+     *  - max redirect
+     *  - relative redirect : https://stackoverflow.com/questions/8250259/is-a-302-redirect-to-relative-url-valid-or-invalid
+     */
+    @Test
+    public void maxRelativeRedirect() {
+        // The base URL
+        WebClient client = WebClient.create("https://httpbin.org");
+
+        // Get the conduit
+        final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
+
+        // Redirection
+        WebClient.getConfig(client).getRequestContext().put("http.redirect.relative.uri", "true"); // Allow or not relative redirect
+        final HTTPClientPolicy policy = conduit.getClient();
+        policy.setAutoRedirect(true);
+        policy.setMaxRetransmits(5);
+
+        final Response resp = client.path("/{action}/{n}", "redirect", "5")  // 2nd part of the query
+                .accept("application/json")        // Set acceptance type
+                .invoke("GET", (Object)null); // Set the HTTP verb and no body
+
+        final int status = resp.getStatus(); // Retrieve the status code
+        Assertions.assertEquals(200, status);
+    }
+
+    /**
+     * It misses the force GET on a 302
+     */
+    @ParameterizedTest
+    @CsvSource({"redirect, true, 6, true", // relative redirect, accept relative, 6 authorized redirects, success expected
+            "redirect, true, 4, false", // relative redirect, accept relative, 4 authorized redirects but 5 needed, failure expected
+            "redirect, false, 6, false", // relative redirect, refuse relative, 6 authorized redirects, failure expected
+            "absolute-redirect, false, 6, true", // relative redirect, refuse relative, 6 authorized redirects, success expected
+            "absolute-redirect, true, 6, true", // relative redirect, accept relative, 6 authorized redirects, success expected
+            "absolute-redirect, true, 4, false" // relative redirect, accept relative, 6 authorized redirects, success expected
+    })
+    public void maxAbsoluteRedirect(String endpoint, boolean acceptRelativeRedirect, int maxRedirect, boolean isSuccess) {
+        // The base URL
+        WebClient client = WebClient.create("https://httpbin.org");
+
+        // Get the conduit
+        final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
+
+        // Redirection
+        WebClient.getConfig(client).getRequestContext().put("http.redirect.relative.uri", acceptRelativeRedirect); // Allow or not relative redirect
+        WebClient.getConfig(client).getRequestContext().put("http.redirect.same.host.only", true); // Redirect only on the same host or not
+        final HTTPClientPolicy policy = conduit.getClient();
+        policy.setAutoRedirect(true);
+        policy.setMaxRetransmits(maxRedirect);
+
+        try {
+            final Response resp = client.path("/{action}/{n}", endpoint, "5")  // 2nd part of the query
+                    .accept("application/json")        // Set acceptance type
+                    .invoke("GET", (Object) null); // Set the HTTP verb and no body
+
+            final int status = resp.getStatus(); // Retrieve the status code
+            Assertions.assertEquals(isSuccess, 200 == status);
+        }
+        catch (Throwable e){
+            Assertions.assertFalse(isSuccess);
+        }
+    }
+
+
+    /**
+     *
+     * Implement a check connection :
+     * - Check URI
+     * - Resolve domain's name to IP
+     * - Validate certificate
+     * - Validate authentication
+     *
+     */
+    @ParameterizedTest
+    @CsvSource({"https://httpbin.org/get?param=aaa, SUCCESS", // All is ok
+                "https://htt % pbin.org/get?param=aaa, MALFORMED_URI", // Malformed URI
+    })
+    public void checkConnection(String suri, String result){
+        try {
+            URI uri = new URI(suri);
+        }
+        catch (URISyntaxException e){
+            Assertions.assertEquals("MALFORMED_URI", result);
+            return;
+        }
+
+        // Resolve hostname
+        try {
+            InetAddress address = InetAddress.getByName("httpbin.org");
+            System.out.println(suri + " address: " + address.getHostAddress());
+        } catch (UnknownHostException e) {
+            Assertions.fail("Unresolved host: "+e.getLocalizedMessage());
+            return;
+        }
+
+
+        Assertions.assertEquals("SUCCESS", result);
+    }
+
 
     /**
      * This dumb X509TrustManager trusts all certificate. TThis SHOULD NOT be used in Production.
