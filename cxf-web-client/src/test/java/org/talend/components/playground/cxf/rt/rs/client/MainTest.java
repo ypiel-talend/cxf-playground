@@ -2,12 +2,16 @@ package org.talend.components.playground.cxf.rt.rs.client;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLSession;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import javax.ws.rs.core.Response;
@@ -16,6 +20,7 @@ import org.apache.cxf.configuration.jsse.TLSClientParameters;
 import org.apache.cxf.configuration.security.AuthorizationPolicy;
 import org.apache.cxf.jaxrs.client.WebClient;
 import org.apache.cxf.transport.http.HTTPConduit;
+import org.apache.cxf.transport.https.SSLUtils;
 import org.apache.cxf.transports.http.configuration.HTTPClientPolicy;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Assertions;
@@ -83,7 +88,7 @@ class MainTest {
         WebClient client = WebClient.create("https://restimprove:44300/", "peter", "aze123#", null);
 
         boolean acceptAllCertificates = true;
-        if(acceptAllCertificates){
+        if (acceptAllCertificates) {
             final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
 
             // Disabled certificates verification
@@ -92,7 +97,7 @@ class MainTest {
                 params = new TLSClientParameters();
                 conduit.setTlsClientParameters(params);
             }
-            params.setTrustManagers(new TrustManager[] { new BlindTrustManager() });
+            params.setTrustManagers(new TrustManager[]{new BlindTrustManager()});
             params.setDisableCNCheck(true);
         }
 
@@ -115,7 +120,7 @@ class MainTest {
         final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
 
         boolean acceptAllCertificates = true;
-        if(acceptAllCertificates){
+        if (acceptAllCertificates) {
 
             // Disable certificate verification
             TLSClientParameters params = conduit.getTlsClientParameters();
@@ -123,7 +128,7 @@ class MainTest {
                 params = new TLSClientParameters();
                 conduit.setTlsClientParameters(params);
             }
-            params.setTrustManagers(new TrustManager[] { new BlindTrustManager() });
+            params.setTrustManagers(new TrustManager[]{new BlindTrustManager()});
             params.setDisableCNCheck(true);
         }
 
@@ -152,14 +157,14 @@ class MainTest {
         final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
 
         boolean acceptAllCertificates = true;
-        if(acceptAllCertificates){
+        if (acceptAllCertificates) {
             // Disable certificate verification
             TLSClientParameters params = conduit.getTlsClientParameters();
             if (params == null) {
                 params = new TLSClientParameters();
                 conduit.setTlsClientParameters(params);
             }
-            params.setTrustManagers(new TrustManager[] { new BlindTrustManager() });
+            params.setTrustManagers(new TrustManager[]{new BlindTrustManager()});
             params.setDisableCNCheck(true);
         }
 
@@ -179,9 +184,9 @@ class MainTest {
 
     /**
      * Manage redirection:
-     *  - auto-redirect
-     *  - max redirect
-     *  - relative redirect : https://stackoverflow.com/questions/8250259/is-a-302-redirect-to-relative-url-valid-or-invalid
+     * - auto-redirect
+     * - max redirect
+     * - relative redirect : https://stackoverflow.com/questions/8250259/is-a-302-redirect-to-relative-url-valid-or-invalid
      */
     @Test
     public void maxRelativeRedirect() {
@@ -199,7 +204,7 @@ class MainTest {
 
         final Response resp = client.path("/{action}/{n}", "redirect", "5")  // 2nd part of the query
                 .accept("application/json")        // Set acceptance type
-                .invoke("GET", (Object)null); // Set the HTTP verb and no body
+                .invoke("GET", (Object) null); // Set the HTTP verb and no body
 
         final int status = resp.getStatus(); // Retrieve the status code
         Assertions.assertEquals(200, status);
@@ -237,31 +242,29 @@ class MainTest {
 
             final int status = resp.getStatus(); // Retrieve the status code
             Assertions.assertEquals(isSuccess, 200 == status);
-        }
-        catch (Throwable e){
+        } catch (Throwable e) {
             Assertions.assertFalse(isSuccess);
         }
     }
 
 
     /**
-     *
      * Implement a check connection :
      * - Check URI
      * - Resolve domain's name to IP
      * - Validate certificate
      * - Validate authentication
-     *
      */
     @ParameterizedTest
     @CsvSource({"https://httpbin.org/get?param=aaa, SUCCESS", // All is ok
-                "https://htt % pbin.org/get?param=aaa, MALFORMED_URI", // Malformed URI
+            "https://htt % pbin.org/get?param=aaa, MALFORMED_URI", // Malformed URI
+            "https://restimprove:45300/,SUCCESS"
     })
-    public void checkConnection(String suri, String result){
+    public void checkConnection(String suri, String result) {
+        URI uri;
         try {
-            URI uri = new URI(suri);
-        }
-        catch (URISyntaxException e){
+           uri = new URI(suri);
+        } catch (URISyntaxException e) {
             Assertions.assertEquals("MALFORMED_URI", result);
             return;
         }
@@ -271,10 +274,31 @@ class MainTest {
             InetAddress address = InetAddress.getByName("httpbin.org");
             System.out.println(suri + " address: " + address.getHostAddress());
         } catch (UnknownHostException e) {
-            Assertions.fail("Unresolved host: "+e.getLocalizedMessage());
+            Assertions.fail("Unresolved host: " + e.getMessage());
             return;
         }
 
+        WebClient client = WebClient.create("https://httpbin.org");
+        final HTTPConduit conduit = WebClient.getConfig(client).getHttpConduit();
+        TLSClientParameters tlsClient = conduit.getTlsClientParameters();
+        if (tlsClient == null) {
+            tlsClient = new TLSClientParameters();
+            conduit.setTlsClientParameters(tlsClient);
+        }
+
+        /*try {
+            final SSLEngine clientSSLEngine = SSLUtils.createClientSSLEngine(tlsClient);
+            final HostnameVerifier hostnameVerifier = SSLUtils.getHostnameVerifier(tlsClient);
+            final boolean verify = hostnameVerifier.verify(suri, clientSSLEngine.getSession());
+            Assertions.assertTrue(verify);
+        } catch (Exception e) {
+            System.err.println("TLS verification error message: " + e.getMessage());
+            Assertions.assertEquals("TLS_VERIFICATION", result);
+            return;
+        }*/
+
+        HttpURLConnection connection; // = new HttpsU
+        HttpURLConnection.
 
         Assertions.assertEquals("SUCCESS", result);
     }
