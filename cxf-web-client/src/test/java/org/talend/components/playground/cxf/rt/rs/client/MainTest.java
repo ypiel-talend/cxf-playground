@@ -2,6 +2,8 @@ package org.talend.components.playground.cxf.rt.rs.client;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URI;
@@ -14,21 +16,62 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import javax.ws.rs.core.Form;
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
 import org.apache.cxf.configuration.jsse.TLSClientParameters;
 import org.apache.cxf.configuration.security.AuthorizationPolicy;
 import org.apache.cxf.jaxrs.client.WebClient;
 import org.apache.cxf.transport.http.HTTPConduit;
+import org.apache.cxf.transport.http.auth.HttpAuthHeader;
 import org.apache.cxf.transport.https.SSLUtils;
 import org.apache.cxf.transports.http.configuration.HTTPClientPolicy;
 import org.json.JSONObject;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class MainTest {
+
+    private final static HTTPServer.TestHTTPServer server = HTTPServer.createServer();
+
+    @BeforeAll
+    public static void beforeAll(){
+        server.getHttpServer().start();
+    }
+
+    @AfterAll
+    public static void afterAll(){
+        server.getHttpServer().stop(0);
+    }
+
+    @Test
+    public void simpleGet() {
+        WebClient client = WebClient.create("https://httpbin.org");
+        Response response = client.path("get")
+                .accept("application/json")
+                .invoke("GET", "");
+
+        InputStream is = (InputStream) response.getEntity();
+
+        byte[] bytes = new byte[0];
+        try {
+            bytes = is.readAllBytes();
+
+
+            String responsePayload = new String(bytes);
+            System.out.println(responsePayload);
+
+            System.out.printf("Done");
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
 
     /**
      * First
@@ -263,7 +306,7 @@ class MainTest {
     public void checkConnection(String suri, String result) {
         URI uri;
         try {
-           uri = new URI(suri);
+            uri = new URI(suri);
         } catch (URISyntaxException e) {
             Assertions.assertEquals("MALFORMED_URI", result);
             return;
@@ -298,9 +341,83 @@ class MainTest {
         }*/
 
         HttpURLConnection connection; // = new HttpsU
-        HttpURLConnection.
+        //HttpURLConnection.
 
         Assertions.assertEquals("SUCCESS", result);
+    }
+
+    @Test
+    public void multipartFormData(){
+        Form form = new Form();
+        form.param("name", "<péter>");
+
+        WebClient client = WebClient.create("https://httpbin.org");
+        Response invoke = client.path("post")
+                .type(MediaType.APPLICATION_FORM_URLENCODED) //.invoke("POST", "{\"name\": \"peter\"}");
+                .invoke("POST", form);
+
+
+        //        .invoke("POST", "Hello world!");
+        final String strResponse = invoke.readEntity(String.class);
+        System.out.printf("end.");
+    }
+
+    @Test
+    public void urlEncodedData(){
+        Form form = new Form();
+        form.param("name", "<péter>");
+
+        WebClient client = WebClient.create("http://localhost:"+server.getPort()+HTTPServer.HTTP_ECHO);
+        Response invoke = client.path("post")
+                .type(MediaType.APPLICATION_FORM_URLENCODED) //.invoke("POST", "{\"name\": \"peter\"}");
+                .form(form);
+
+        //        .invoke("POST", "Hello world!");
+        final String strResponse = invoke.readEntity(String.class);
+        System.out.printf("end.");
+    }
+
+    @Test
+    public void multiValued(){
+        WebClient client = WebClient.create("http://localhost:"+server.getPort()+HTTPServer.HTTP_ECHO);
+        client.header("header1", "val1");
+        client.header("header1", "val2");
+        client.header("headers2", "bbb1", "bbb2");
+        client.query("qa", "qa1");
+        client.query("qa", "qa2");
+        client.query("qb", "qb1", "qb2");
+        Response invoke = client.path("echo")
+                .invoke("GET", null);
+        final String strResponse = invoke.readEntity(String.class);
+        System.out.printf(strResponse);
+
+    }
+
+    @ParameterizedTest
+    @CsvSource({"auth,MD5",
+            "auth,SHA-256",
+            "auth,SHA-512",
+            "auth-int,MD5",
+            "auth-int,SHA-256",
+            "auth-int,SHA-512",})
+    public void digest(String qop, String algo){
+        String myUser = "myUser";
+        String myPassword = "myPassword";
+
+        WebClient client = WebClient.create("https://httpbin.org/digest-auth/")
+                .path("{qop}/{user}/{passwd}/{algorithm}", qop, myUser, myPassword, algo);
+
+        HTTPConduit httpConduit = WebClient.getConfig(client).getHttpConduit();
+
+        AuthorizationPolicy digestAuthPolicy = new AuthorizationPolicy();
+        digestAuthPolicy.setUserName(myUser);
+        digestAuthPolicy.setPassword(myPassword);
+        digestAuthPolicy.setAuthorizationType(HttpAuthHeader.AUTH_TYPE_DIGEST);
+        httpConduit.setAuthorization(digestAuthPolicy);
+
+        Response response = client.invoke("GET", null);
+
+        System.out.println(String.format("qop=%s, algo=%s => status: %s", qop, algo, response.getStatus())); // is 200 OK
     }
 
 
