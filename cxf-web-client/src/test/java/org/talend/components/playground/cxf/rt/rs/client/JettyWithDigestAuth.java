@@ -14,6 +14,7 @@ import org.eclipse.jetty.security.HashLoginService;
 import org.eclipse.jetty.security.LoginService;
 import org.eclipse.jetty.security.authentication.DigestAuthenticator;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.servlet.ServletHandler;
 import org.eclipse.jetty.util.security.Constraint;
 import org.junit.jupiter.api.Assertions;
@@ -23,6 +24,7 @@ import javax.ws.rs.core.Response;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
 import java.net.URL;
 import java.util.Collections;
 
@@ -139,10 +141,11 @@ public class JettyWithDigestAuth {
 
     @Test
     public void jettyTest() throws Exception {
-        int port = 9876;
-        Server server = createServer(port);
+        Server server = createServer(0);
         server.start();
 
+        int port = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
+        System.out.println("Port will be: " + port);
         call(port);
 
 
